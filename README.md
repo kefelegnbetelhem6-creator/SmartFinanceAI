@@ -1,26 +1,24 @@
-# 📊 AI-Powered Finance Management System
+# 💰 Intelligent Finance Suite - AI Powered
 
-A professional financial dashboard built with **Python 3.13**, **Streamlit**, and **Llama 3.3 (via Groq API)**. 
+A comprehensive personal finance management system built with **Python**, **Streamlit**, and **Llama 3.3 (via Groq API)**. Features secure user authentication, interactive data visualization, and AI-driven financial advice.
+
+## 📸 Dashboard Preview
+![App Preview](screenshots/demo.png)
 
 ## 🌟 Key Features
-- **Transaction Tracking:** Record and manage income and expenses with an SQLite backend.
-- **Visual Analytics:** Interactive Pie Charts and Bar Graphs for spending patterns.
-- **Budget Monitoring:** Set monthly limits and get real-time alerts.
-- **AI Financial Advisor:** Professional financial analysis and advice using LLMs.
-- **Data Portability:** Export your financial history to CSV.
+- **Secure Authentication:** User registration and login system with password encryption (SHA-256).
+- **Financial Analytics:** Interactive charts using **Plotly** to track spending patterns and income trends.
+- **AI Financial Consultant:** Personalized saving strategies and insights powered by Llama 3.3.
+- **Budget Management:** Set monthly limits and receive real-time budget adherence alerts.
+- **Data Export:** Export transaction history to CSV format for external use.
 
-## 🛠️ Technology Stack
-- **Backend:** Python, SQLite, Pandas
-- **Frontend:** Streamlit, Plotly
-- **AI:** Groq API (Llama 3.3 model)
-- **Security:** Dotenv for API key protection
+## 🛠️ Tech Stack
+- **Frontend:** Streamlit
+- **Backend:** Python 3.13, SQLite
+- **AI Engine:** Groq Cloud API
+- **Visuals:** Plotly Express
 
-## ⚙️ Setup Instructions
-1. Clone the repository.
-2. Install dependencies: `pip install -r requirements.txt`
-3. Add your `GROQ_API_KEY` to a `.env` file.
-4. Run the app: `streamlit run app.py`
-
-## 👤 Author
-- **Betelhem Kefelegn** 
-- 4th Year software engineering Student
+---
+### 👤 Author
+- **Betelhem Kefelegn**
+- 4th Year Software Engineering Student
