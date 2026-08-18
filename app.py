@@ -232,6 +232,7 @@ if not df_records.empty:
                 remove_entry(row['id'])
                 st.rerun()
 
+
     with tab_ai:
         st.subheader("Automated Financial Insights")
         if st.button("Generate Expert Report"):
