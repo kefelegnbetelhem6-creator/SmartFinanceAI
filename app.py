@@ -10,15 +10,14 @@ import plotly.express as px
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables
+# Configuration
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DATABASE_FILE = 'finance_manager.db'
 
-# Page Configuration
 st.set_page_config(page_title="Intelligent Finance Suite", page_icon="⚖️", layout="wide")
 
-# --- Security & Authentication Logic ---
+# --- Security & Authentication ---
 
 def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
@@ -27,7 +26,6 @@ def verify_password_hash(password, hashed_text):
     return hash_password(password) == hashed_text
 
 def validate_password_strength(password):
-    """Ensures password meet security standards: 6+ chars, 1 digit, 1 uppercase."""
     if len(password) < 6:
         return False, "Password must be at least 6 characters long."
     if not re.search(r"\d", password):
@@ -90,15 +88,13 @@ def load_user_records(username):
     conn.close()
     return df
 
-# --- AI Integration Service ---
+# --- AI Integration Service (Optimized for Deployment) ---
 
 def fetch_ai_analysis(df):
     if not GROQ_API_KEY:
-        return "Service Error: Connectivity issue."
+        return "System Error: API Key not found in environment."
     
-    # Flattening data for the LLM context
     summary_data = df.groupby(['type', 'category'])['amount'].sum().to_string()
-    
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -106,13 +102,13 @@ def fetch_ai_analysis(df):
     }
     
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "llama-3.1-8b-instant", # Using the most stable high-speed model
         "messages": [
             {
                 "role": "system", 
-                "content": "You are a professional financial consultant. Analyze the data and provide 3 concise, high-impact saving strategies. Use professional English. No introductory text."
+                "content": "You are a direct financial consultant. Analyze the data and provide 3 short bullet points of advice. No conversational filler. English only."
             },
-            {"role": "user", "content": f"Dataset Summary:\n{summary_data}"}
+            {"role": "user", "content": f"Data:\n{summary_data}"}
         ],
         "temperature": 0.1
     }
@@ -121,20 +117,19 @@ def fetch_ai_analysis(df):
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code == 200:
             return response.json()['choices'][0]['message']['content']
-        return f"AI Error: HTTP {response.status_code}"
+        return f"Service Notification: HTTP {response.status_code}. The AI engine is updating. Please try again in a moment."
     except Exception:
-        return "AI Engine unreachable."
+        return "Connection Timeout: Unable to reach AI server."
 
-# --- Application Main Interface ---
+# --- Main Application Logic ---
 
 init_db()
 
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
-# --- Auth Screen ---
 if not st.session_state.authenticated:
-    st.title("🔐 Intelligent Finance Suite - Secure Portal")
+    st.title("🔐 Secure Portal | Intelligent Finance")
     mode = st.tabs(["Login", "Create Account"])
     
     with mode[0]:
@@ -146,48 +141,47 @@ if not st.session_state.authenticated:
                 st.session_state.current_user = user_in
                 st.rerun()
             else:
-                st.error("Invalid authentication credentials.")
+                st.error("Authentication failed. Please check your credentials.")
 
     with mode[1]:
         new_user = st.text_input("New Username")
         new_pass = st.text_input("New Password", type="password")
-        if st.button("Register"):
+        if st.button("Register Account"):
             is_strong, msg = validate_password_strength(new_pass)
             if not is_strong:
                 st.warning(msg)
             else:
                 try:
                     register_user(new_user, new_pass)
-                    st.success("Account verified. Please log in.")
+                    st.success("Account created. You can now login.")
                 except sqlite3.IntegrityError:
-                    st.error("Identity already exists.")
+                    st.error("Username is already taken.")
     st.stop()
 
-# --- Dashboard Screen (Post-Authentication) ---
+# --- Post-Login Dashboard ---
 
-st.title(f"💼 Financial Control Panel | {st.session_state.current_user}")
+st.title(f"💼 Control Panel | {st.session_state.current_user}")
 
 with st.sidebar:
-    st.header("Transaction Console")
-    entry_type = st.selectbox("Entry Type", ["Expense", "Income"])
-    categories = ["Food", "Housing", "Transport", "Income/Salary", "Health", "Shopping", "Leisure", "Utility"]
-    cat = st.selectbox("Classification", categories)
-    amt = st.number_input("Value (ETB)", min_value=1.0, step=50.0)
-    note = st.text_input("Memo/Description")
+    st.header("New Transaction")
+    entry_type = st.selectbox("Type", ["Expense", "Income"])
+    categories = ["Food", "Housing", "Transport", "Income/Salary", "Health", "Shopping", "Education", "Other"]
+    cat = st.selectbox("Category", categories)
+    amt = st.number_input("Amount (ETB)", min_value=1.0, step=100.0)
+    note = st.text_input("Note")
     
-    if st.button("Commit Transaction"):
+    if st.button("Record Transaction"):
         add_entry(cat, note, amt, entry_type, st.session_state.current_user)
-        st.toast("Record Synchronized")
+        st.toast("Database Updated")
         st.rerun()
     
     st.divider()
-    budget = st.number_input("Monthly Target (ETB)", value=10000.0)
+    budget = st.number_input("Monthly Budget Target (ETB)", value=10000.0)
     
-    if st.button("Terminate Session"):
+    if st.button("Sign Out"):
         st.session_state.authenticated = False
         st.rerun()
 
-# Data Retrieval and Visualization
 df_records = load_user_records(st.session_state.current_user)
 
 if not df_records.empty:
@@ -197,47 +191,45 @@ if not df_records.empty:
         total_in = df_records[df_records['type'] == 'Income']['amount'].sum()
         total_out = df_records[df_records['type'] == 'Expense']['amount'].sum()
         
-        # Budget Analysis
         if total_out > budget:
-            st.error(f"⚠️ Limit Breach: Exceeded by {total_out - budget:,.2f} ETB")
+            st.error(f"⚠️ Budget Alert: Limit exceeded by {total_out - budget:,.2f} ETB")
         else:
-            st.success(f"✅ Budget Adherence: {budget - total_out:,.2f} ETB remaining")
+            st.success(f"✅ Budget Status: {budget - total_out:,.2f} ETB remaining")
 
-        metric_cols = st.columns(3)
-        metric_cols[0].metric("Gross Income", f"{total_in:,.2f}")
-        metric_cols[1].metric("Gross Expenses", f"{total_out:,.2f}")
-        metric_cols[2].metric("Net Liquidity", f"{total_in - total_out:,.2f}")
+        m_cols = st.columns(3)
+        m_cols[0].metric("Total Income", f"{total_in:,.2f}")
+        m_cols[1].metric("Total Expenses", f"{total_out:,.2f}")
+        m_cols[2].metric("Net Balance", f"{total_in - total_out:,.2f}")
 
-        chart_cols = st.columns(2)
-        with chart_cols[0]:
-            expense_filter = df_records[df_records['type'] == 'Expense']
-            if not expense_filter.empty:
-                fig_pie = px.pie(expense_filter, values='amount', names='category', title="Expense Categorization")
+        c_cols = st.columns(2)
+        with m_cols[0]: # Re-using column logic for charts
+            expense_only = df_records[df_records['type'] == 'Expense']
+            if not expense_only.empty:
+                fig_pie = px.pie(expense_only, values='amount', names='category', title="Spending by Category")
                 st.plotly_chart(fig_pie, use_container_width=True)
-        with chart_cols[1]:
-            fig_bar = px.bar(df_records, x='date', y='amount', color='type', barmode='group', title="Financial Trajectory")
+        with c_cols[1]:
+            fig_bar = px.bar(df_records, x='date', y='amount', color='type', barmode='group', title="Financial History")
             st.plotly_chart(fig_bar, use_container_width=True)
 
     with tab_ledger:
-        st.subheader("Data Management")
-        st.download_button("Export to CSV", data=df_records.to_csv(index=False).encode('utf-8'), file_name="statement.csv")
+        st.subheader("Data Records")
+        st.download_button("Download Statement (CSV)", data=df_records.to_csv(index=False).encode('utf-8'), file_name="statement.csv")
         
         for idx, row in df_records.iterrows():
-            row_cols = st.columns([1, 2, 2, 2, 1])
-            row_cols[0].write(row['date'])
-            row_cols[1].write(row['category'])
-            row_cols[2].write(f"{row['amount']:,.2f}")
-            row_cols[3].write(row['type'])
-            if row_cols[4].button("Delete", key=f"rm_{row['id']}"):
+            r_cols = st.columns([1, 2, 2, 2, 1])
+            r_cols[0].write(row['date'])
+            r_cols[1].write(row['category'])
+            r_cols[2].write(f"{row['amount']:,.2f}")
+            r_cols[3].write(row['type'])
+            if r_cols[4].button("Delete", key=f"del_{row['id']}"):
                 remove_entry(row['id'])
                 st.rerun()
 
-
     with tab_ai:
-        st.subheader("Automated Financial Insights")
+        st.subheader("AI Financial Intelligence")
         if st.button("Generate Expert Report"):
-            with st.spinner("AI Engine Analyzing Patterns..."):
-                consultant_advice = fetch_ai_analysis(df_records)
-                st.markdown(consultant_advice)
+            with st.spinner("Analyzing patterns..."):
+                advice = fetch_ai_analysis(df_records)
+                st.markdown(advice)
 else:
-    st.info("System Ready. Please input data via the side console to generate insights.")
+    st.info("Your dashboard is currently empty. Please add a transaction to begin.")
