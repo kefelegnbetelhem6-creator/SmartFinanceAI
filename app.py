@@ -1,159 +1,242 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime
+import hashlib
 import requests
+import re
 import os
+import json
 import plotly.express as px
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Configuration
+# Load environment variables
 load_dotenv()
-st.set_page_config(page_title="Finance AI System", page_icon="📊", layout="wide")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DATABASE_FILE = 'finance_manager.db'
 
-# --- Database Logic ---
+# Page Configuration
+st.set_page_config(page_title="Intelligent Finance Suite", page_icon="⚖️", layout="wide")
+
+# --- Security & Authentication Logic ---
+
+def hash_password(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+def verify_password_hash(password, hashed_text):
+    return hash_password(password) == hashed_text
+
+def validate_password_strength(password):
+    """Ensures password meet security standards: 6+ chars, 1 digit, 1 uppercase."""
+    if len(password) < 6:
+        return False, "Password must be at least 6 characters long."
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one digit."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter."
+    return True, "Strong"
+
+# --- Database Management ---
+
 def init_db():
-    conn = sqlite3.connect('finance_system.db')
+    conn = sqlite3.connect(DATABASE_FILE)
     c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (username TEXT PRIMARY KEY, password TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS transactions
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  date TEXT, category TEXT, description TEXT, amount REAL, type TEXT)''')
+                  date TEXT, category TEXT, description TEXT, 
+                  amount REAL, type TEXT, username TEXT)''')
     conn.commit()
     conn.close()
 
-def add_transaction(category, description, amount, trans_type):
-    conn = sqlite3.connect('finance_system.db')
+def register_user(username, password):
+    conn = sqlite3.connect(DATABASE_FILE)
     c = conn.cursor()
-    date = datetime.now().strftime("%Y-%m-%d")
-    c.execute("INSERT INTO transactions (date, category, description, amount, type) VALUES (?, ?, ?, ?, ?)",
-              (date, category, description, amount, trans_type))
+    c.execute("INSERT INTO users (username, password) VALUES (?,?)", (username, hash_password(password)))
     conn.commit()
     conn.close()
 
-def delete_transaction(id):
-    conn = sqlite3.connect('finance_system.db')
+def authenticate_user(username, password):
+    conn = sqlite3.connect(DATABASE_FILE)
     c = conn.cursor()
-    c.execute("DELETE FROM transactions WHERE id=?", (id,))
+    c.execute("SELECT password FROM users WHERE username = ?", (username,))
+    data = c.fetchone()
+    conn.close()
+    if data:
+        return verify_password_hash(password, data[0])
+    return False
+
+def add_entry(category, description, amount, entry_type, username):
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+    date_stamp = datetime.now().strftime("%Y-%m-%d")
+    c.execute("INSERT INTO transactions (date, category, description, amount, type, username) VALUES (?,?,?,?,?,?)",
+              (date_stamp, category, description, amount, entry_type, username))
     conn.commit()
     conn.close()
 
-def get_data_as_df():
-    conn = sqlite3.connect('finance_system.db')
-    df = pd.read_sql_query("SELECT * FROM transactions", conn)
+def remove_entry(entry_id):
+    conn = sqlite3.connect(DATABASE_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM transactions WHERE id = ?", (entry_id,))
+    conn.commit()
+    conn.close()
+
+def load_user_records(username):
+    conn = sqlite3.connect(DATABASE_FILE)
+    query = "SELECT * FROM transactions WHERE username = ?"
+    df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
 
-# --- AI Logic (Groq/Llama 3) ---
-# --- AI Logic (Groq/Llama 3) ---
-# --- AI Logic (Short & Direct Version) ---
-def get_ai_insights(df):
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key: return "Error: API Key missing."
+# --- AI Integration Service ---
+
+def fetch_ai_analysis(df):
+    if not GROQ_API_KEY:
+        return "Service Error: Connectivity issue."
     
-    summary = df.groupby(['type', 'category'])['amount'].sum().to_dict()
+    # Flattening data for the LLM context
+    summary_data = df.groupby(['type', 'category'])['amount'].sum().to_string()
     
     url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
     payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "system", 
-                # ትዕዛዙን አሳጥረነዋል - ሰላምታና መደምደሚያ እንዳይጽፍ አዝዘነዋል
-                "content": "You are a direct financial expert. Analyze the data and provide ONLY 2-3 short bullet points of advice. No introduction, no conclusion, and no fluff. English only."
+                "content": "You are a professional financial consultant. Analyze the data and provide 3 concise, high-impact saving strategies. Use professional English. No introductory text."
             },
-            {"role": "user", "content": f"Data: {summary}"}
-        ]
+            {"role": "user", "content": f"Dataset Summary:\n{summary_data}"}
+        ],
+        "temperature": 0.1
     }
+    
     try:
         response = requests.post(url, headers=headers, json=payload)
-        return response.json()['choices'][0]['message']['content']
-    except:
-        return "AI Service is unavailable."
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        return f"AI Error: HTTP {response.status_code}"
+    except Exception:
+        return "AI Engine unreachable."
 
-# --- Main UI ---
+# --- Application Main Interface ---
+
 init_db()
-st.title("📊 Finance AI System")
 
-# Sidebar - Input Section
-with st.sidebar:
-    st.header("Transaction Entry")
-    t_type = st.selectbox("Type", ["Expense", "Income"])
-    cat_options = ["Food", "Rent", "Transport", "Salary", "Health", "Education", "Shopping", "Entertainment", "Other"]
-    category = st.selectbox("Category", cat_options)
-    amount = st.number_input("Amount (ETB)", min_value=1.0)
-    desc = st.text_input("Description")
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+# --- Auth Screen ---
+if not st.session_state.authenticated:
+    st.title("🔐 Intelligent Finance Suite - Secure Portal")
+    mode = st.tabs(["Login", "Create Account"])
     
-    if st.button("Save Transaction"):
-        add_transaction(category, desc, amount, t_type)
-        st.success("Record Saved")
+    with mode[0]:
+        user_in = st.text_input("Username", key="login_user")
+        pass_in = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Access Dashboard"):
+            if authenticate_user(user_in, pass_in):
+                st.session_state.authenticated = True
+                st.session_state.current_user = user_in
+                st.rerun()
+            else:
+                st.error("Invalid authentication credentials.")
+
+    with mode[1]:
+        new_user = st.text_input("New Username")
+        new_pass = st.text_input("New Password", type="password")
+        if st.button("Register"):
+            is_strong, msg = validate_password_strength(new_pass)
+            if not is_strong:
+                st.warning(msg)
+            else:
+                try:
+                    register_user(new_user, new_pass)
+                    st.success("Account verified. Please log in.")
+                except sqlite3.IntegrityError:
+                    st.error("Identity already exists.")
+    st.stop()
+
+# --- Dashboard Screen (Post-Authentication) ---
+
+st.title(f"💼 Financial Control Panel | {st.session_state.current_user}")
+
+with st.sidebar:
+    st.header("Transaction Console")
+    entry_type = st.selectbox("Entry Type", ["Expense", "Income"])
+    categories = ["Food", "Housing", "Transport", "Income/Salary", "Health", "Shopping", "Leisure", "Utility"]
+    cat = st.selectbox("Classification", categories)
+    amt = st.number_input("Value (ETB)", min_value=1.0, step=50.0)
+    note = st.text_input("Memo/Description")
+    
+    if st.button("Commit Transaction"):
+        add_entry(cat, note, amt, entry_type, st.session_state.current_user)
+        st.toast("Record Synchronized")
         st.rerun()
     
     st.divider()
-    st.header("Budget Settings")
-    budget_limit = st.number_input("Monthly Budget Limit (ETB)", min_value=0.0, value=10000.0)
+    budget = st.number_input("Monthly Target (ETB)", value=10000.0)
+    
+    if st.button("Terminate Session"):
+        st.session_state.authenticated = False
+        st.rerun()
 
-# Main Dashboard Tabs
-tab1, tab2, tab3 = st.tabs(["📈 Dashboard", "📂 Records", "🤖 AI Insights"])
+# Data Retrieval and Visualization
+df_records = load_user_records(st.session_state.current_user)
 
-df = get_data_as_df()
-
-if not df.empty:
-    with tab1:
-        st.subheader("Financial Overview")
-        income = df[df['type'] == 'Income']['amount'].sum()
-        expense = df[df['type'] == 'Expense']['amount'].sum()
-        net_balance = income - expense
+if not df_records.empty:
+    tab_overview, tab_ledger, tab_ai = st.tabs(["📊 Analytics", "📂 Ledger", "🧠 AI Consultant"])
+    
+    with tab_overview:
+        total_in = df_records[df_records['type'] == 'Income']['amount'].sum()
+        total_out = df_records[df_records['type'] == 'Expense']['amount'].sum()
         
-        # Budget Alert Logic
-        if expense > budget_limit:
-            st.error(f"⚠️ Budget Alert: You have exceeded your limit by {expense - budget_limit:,.2f} ETB")
+        # Budget Analysis
+        if total_out > budget:
+            st.error(f"⚠️ Limit Breach: Exceeded by {total_out - budget:,.2f} ETB")
         else:
-            st.success(f"✅ Budget Status: You have {budget_limit - expense:,.2f} ETB remaining for the month.")
+            st.success(f"✅ Budget Adherence: {budget - total_out:,.2f} ETB remaining")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"{income:,.2f} ETB")
-        col2.metric("Total Expense", f"{expense:,.2f} ETB")
-        col3.metric("Net Balance", f"{net_balance:,.2f} ETB")
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Gross Income", f"{total_in:,.2f}")
+        metric_cols[1].metric("Gross Expenses", f"{total_out:,.2f}")
+        metric_cols[2].metric("Net Liquidity", f"{total_in - total_out:,.2f}")
 
-        # Visualization
-        col_left, col_right = st.columns(2)
-        with col_left:
-            st.write("Expenses by Category")
-            exp_df = df[df['type'] == 'Expense']
-            if not exp_df.empty:
-                fig_pie = px.pie(exp_df, values='amount', names='category', hole=0.4)
+        chart_cols = st.columns(2)
+        with chart_cols[0]:
+            expense_filter = df_records[df_records['type'] == 'Expense']
+            if not expense_filter.empty:
+                fig_pie = px.pie(expense_filter, values='amount', names='category', title="Expense Categorization")
                 st.plotly_chart(fig_pie, use_container_width=True)
-        
-        with col_right:
-            st.write("Transaction Trends")
-            fig_bar = px.bar(df, x='date', y='amount', color='type', barmode='group')
+        with chart_cols[1]:
+            fig_bar = px.bar(df_records, x='date', y='amount', color='type', barmode='group', title="Financial Trajectory")
             st.plotly_chart(fig_bar, use_container_width=True)
 
-    with tab2:
+    with tab_ledger:
         st.subheader("Data Management")
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Export CSV", data=csv, file_name="finance_records.csv", mime="text/csv")
+        st.download_button("Export to CSV", data=df_records.to_csv(index=False).encode('utf-8'), file_name="statement.csv")
         
-        # Display Records with Delete Option
-        for index, row in df.iterrows():
-            cols = st.columns([1, 2, 2, 2, 1, 1])
-            cols[0].write(row['id'])
-            cols[1].write(row['date'])
-            cols[2].write(row['category'])
-            cols[3].write(row['amount'])
-            cols[4].write(row['type'])
-            if cols[5].button("🗑️", key=f"del_{row['id']}"):
-                delete_transaction(row['id'])
+        for idx, row in df_records.iterrows():
+            row_cols = st.columns([1, 2, 2, 2, 1])
+            row_cols[0].write(row['date'])
+            row_cols[1].write(row['category'])
+            row_cols[2].write(f"{row['amount']:,.2f}")
+            row_cols[3].write(row['type'])
+            if row_cols[4].button("Delete", key=f"rm_{row['id']}"):
+                remove_entry(row['id'])
                 st.rerun()
-        st.divider()
 
-    with tab3:
-        st.subheader("AI Financial Analysis")
-        if st.button("Generate AI Report"):
-            with st.spinner("Processing Data..."):
-                advice = get_ai_insights(df)
-                st.markdown(advice)
-
+    with tab_ai:
+        st.subheader("Automated Financial Insights")
+        if st.button("Generate Expert Report"):
+            with st.spinner("AI Engine Analyzing Patterns..."):
+                consultant_advice = fetch_ai_analysis(df_records)
+                st.markdown(consultant_advice)
 else:
-    st.info("No records found. Use the sidebar to add transactions.")
+    st.info("System Ready. Please input data via the side console to generate insights.")
